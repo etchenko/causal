@@ -26,14 +26,14 @@ def mmd(x, y):
 #
 # Compute the MDD and p-value based on combined distribution sample
 #
-def ci_mmd(x, y, plot = False, num_bootstraps=2000, alpha=0.05):
+def ci_mmd(x, y, plot = False, num_bootstraps=1000, alpha=0.05):
     n = len(x)
     combined = np.append(x, y)
     ker_comb = combined.reshape(-1, 1)
 
     dists = torch.pdist(torch.from_numpy(combined)[:,None])
     sigma = dists[:100].median()/2
-    ker = metrics.pairwise.rbf_kernel(ker_comb, ker_comb, 1/2*(0.5**2))
+    ker = metrics.pairwise.rbf_kernel(ker_comb, ker_comb, 1/2*(sigma.numpy()**2))
     
     xx = ker[:n, :n]
     yy = ker[n:, n:]
