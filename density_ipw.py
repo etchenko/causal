@@ -8,30 +8,36 @@ import matplotlib.pyplot as plt
 import numpy as np
 import mmd
 import warnings
+from scipy import stats
+import pylab
 pd.options.mode.chained_assignment = None  # default='warn'
 
 #
 # Calculate the counterfactual distributions using a regression to find the propensity weighting
 #
-def practical_counterfactual_distributions(A, C, Y, data, trim = True):
+def practical_counterfactual_distributions(A, C, Y, data, norm = True, trim = True):
     log_reg = sm.GLM.from_formula(formula=f"{A} ~ {'+'.join(C)}", data = data, family = sm.families.Binomial()).fit()
     log_propensity = log_reg.predict(data)
     data['log_p'] = np.where(data[A] == 0, 1 - log_propensity, log_propensity)
-    return counterfactual_distributions(A, Y, 'log_p', data, trim)
+    return counterfactual_distributions(A, Y, 'log_p', data, norm, trim)
 
 #
 # Calculate the counterfactual distributions using theoretical weighting
 #
-def theoretical_counterfactual_distributions(A, T, Y, data, trim = True):
-    return counterfactual_distributions(A, Y, T, data, trim)
+def theoretical_counterfactual_distributions(A, T, Y, data, norm = True, trim = True):
+    return counterfactual_distributions(A, Y, T, data, norm, trim)
 
 #
 # Calculate counterfactual distribbution
 #
-def counterfactual_distributions(A, Y, prop, data, trimming):
-    minimum = data[Y].min()
-    maximum = data[Y].max() - minimum
-    data[Y] = (data[Y] - minimum)/maximum
+def counterfactual_distributions(A, Y, prop, data, norm, trimming):
+    '''
+    Calculate counterfactual distribbution
+    '''
+    if norm:
+        minimum = data[Y].min()
+        maximum = data[Y].max() - minimum
+        data[Y] = (data[Y] - minimum)/maximum
 
     if trimming:
         data = trim(data, prop)
@@ -51,8 +57,9 @@ def counterfactual_distributions(A, Y, prop, data, trimming):
     return a0_resample, a1_resample
 
 def trim(data, prop, a = 0.1):
-    for i in range(data[prop].last_valid_index(), data[prop].first_valid_index() - 1, -1):
-        if data[prop][i] <= a or data[prop][i] >= 1 - a:
+    data = data.copy()
+    for i in range(data[prop].last_valid_index(), data[prop].first_valid_index(), -1):
+        if data[prop].iloc[i] <= a or data[prop].iloc[i] >= 1 - a:
             # Trim outliers
             data.drop(i, inplace = True)
     return data
@@ -65,6 +72,47 @@ def remove_outliers(data):
     lower = q1 - 1.5*iqr
     data = list(filter(lambda x: x < upper and x > lower, data))
     return data
+
+def kernel_estimation(A, C, Y, data):
+    log_reg = sm.GLM.from_formula(formula=f"{A} ~ {'+'.join(C)}", data = data, family = sm.families.Binomial()).fit()
+    log_propensity = log_reg.predict(data)
+    data['log_p'] = np.where(data[A] == 0, 1 - log_propensity, log_propensity)
+
+    minimum = data[Y].min()
+    maximum = data[Y].max() - minimum
+    data[Y] = (data[Y] - minimum)/maximum
+
+    data = trim(data, 'log_p')
+
+    a1 = data[data[A] == 1]
+    a0 = data[data[A] == 0]
+
+    prop1 = 1/a1['log_p']
+    prop0 = 1/a0['log_p']
+
+    propensity_weighting_1 = prop1/(prop1.sum())
+    propensity_weighting_0 = prop0/(prop0.sum())
+
+    kernel1 = stats.gaussian_kde(a1[Y], 'scott', propensity_weighting_1)
+    kernel0 = stats.gaussian_kde(a0[Y], 'scott', propensity_weighting_0)
+
+    a1_resample = np.random.choice(a1[Y], int(len(a1)/2), replace = True, p = propensity_weighting_1)
+    a0_resample = np.random.choice(a0[Y], int(len(a0)/2), replace = True, p = propensity_weighting_0)
+
+    kernel2 = stats.gaussian_kde(a1_resample, 'scott')
+    kernel3 = stats.gaussian_kde(a0_resample, 'scott')
+
+    x = np.linspace(0,1,100)
+    pylab.plot(x,kernel1(x),"r", label = "Y(a')") # distribution function
+    pylab.plot(x,kernel0(x),"b", label = 'Y(a)') # distribution function
+    pylab.plot(x,kernel2(x),"g", label = "Y(a') resampled") # distribution function
+    pylab.plot(x,kernel3(x),"m", label = 'Y(a) resampled') # distribution function
+    pylab.hist(a1_resample,density=1,alpha=.3, color = "m", label = "Y(a') resampled histogram") # histogram
+    pylab.hist(a0_resample,density=1,alpha=.3, color = "g", label = "Y(a) resampled histogram") # histogram
+    pylab.legend(loc='upper right')
+    pylab.title("Counterfactual Densities")
+    pylab.show()
+    
 
 
 # 
@@ -114,7 +162,7 @@ def check_no_change(data, nums):
     print(mmd.ci_mmd(prac_dist[0], prac_dist[1]))
 
 def test_generated():
-    nums = 2000
+    nums = 10000
     data = pd.DataFrame()
     data['C'] = sf.generate_normal(0, 1, nums)
     arr = [0]*nums
@@ -126,10 +174,12 @@ def test_generated():
             arr[i] = 0 if p < 0.3 else 1
     data['A'] = arr
     data['theor'] = np.where(data['A'] == 0, np.where(data['C'] > 0, 0.7, 0.3), np.where(data['C'] > 0, 0.3, 0.7))
+    data['Y'] = data['C'] + 2*data['A'] + sf.generate_uniform(-1, 1, nums)
 
-    check_distribution_change(data, nums)
-    check_y_change(data, nums)
-    check_no_change(data, nums)
+    #check_distribution_change(data, nums)
+    #check_y_change(data, nums)
+    #check_no_change(data, nums)
+    kernel_estimation('A',['C'],'Y', data)
 
 
 #
@@ -146,6 +196,10 @@ def main():
     #print(output[0])
     #print(output[1])
     #plot_distributions(output, 'Randomized')
+    
+    #kernel_estimation('treat',covariates,'re78',nsw_observational)
+    #test_generated()
+    '''
     for i in range(10):
         nsw_observational = pd.read_csv("Data/nsw_observational.txt")
         output = practical_counterfactual_distributions('treat', covariates, 're78', nsw_observational)
@@ -154,6 +208,24 @@ def main():
         output2 = (remove_outliers(output[0]), remove_outliers(output[1]))
         plot_distributions(output2, "Outliers Removed")
         print(f"No outliers: {mmd.ci_mmd(output2[0], output2[1])}")
+    '''
+    minimum = nsw_randomized['re78'].min()
+    maximum = nsw_randomized['re78'].max() - minimum
+    nsw_randomized['re78'] = (nsw_randomized['re78'] - minimum)/maximum
+
+    nsw_1 = nsw_randomized[nsw_randomized['treat'] == 1]
+    nsw_0 = nsw_randomized[nsw_randomized['treat'] == 0]
+    kernel1 = stats.gaussian_kde(nsw_1['re78'], 'scott')
+    kernel0 = stats.gaussian_kde(nsw_0['re78'], 'scott')
+
+    x = np.linspace(0,1,100)
+    pylab.plot(x,kernel1(x),"r", label = "Y(a')") # distribution function
+    pylab.plot(x,kernel0(x),"b", label = 'Y(a)') # distribution function
+    pylab.hist(nsw_1['re78'],density=1,alpha=.3, color = "m", label = "Y(a')") # histogram
+    pylab.hist(nsw_0['re78'],density=1,alpha=.3, color = "g", label = "Y(a)") # histogram
+    pylab.legend(loc='upper right')
+    pylab.title("Counterfactual Densities")
+    pylab.show()
 
     #plot_distributions(output2, 'Observational')
     #print(mmd.ci_mmd(output2[0], output2[1]))
