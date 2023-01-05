@@ -12,6 +12,7 @@ from scipy import stats
 import pylab
 pd.options.mode.chained_assignment = None  # default='warn'
 
+
 #
 # Calculate the counterfactual distributions using a regression to find the propensity weighting
 #
@@ -79,8 +80,8 @@ def kernel_estimation(A, C, Y, data):
     data['log_p'] = np.where(data[A] == 0, 1 - log_propensity, log_propensity)
 
     minimum = data[Y].min()
-    maximum = data[Y].max() - minimum
-    data[Y] = (data[Y] - minimum)/maximum
+    maximum = data[Y].max()
+    #data[Y] = (data[Y] - minimum)/maximum
 
     data = trim(data, 'log_p')
 
@@ -93,24 +94,42 @@ def kernel_estimation(A, C, Y, data):
     propensity_weighting_1 = prop1/(prop1.sum())
     propensity_weighting_0 = prop0/(prop0.sum())
 
-    kernel1 = stats.gaussian_kde(a1[Y], 'scott', propensity_weighting_1)
-    kernel0 = stats.gaussian_kde(a0[Y], 'scott', propensity_weighting_0)
 
     a1_resample = np.random.choice(a1[Y], int(len(a1)/2), replace = True, p = propensity_weighting_1)
     a0_resample = np.random.choice(a0[Y], int(len(a0)/2), replace = True, p = propensity_weighting_0)
 
+    #a0_resample, a1_resample = theoretical_counterfactual_distributions('A', 'theor', 'Y', data, norm = True, trim = False)
+
+
+    x = np.linspace(minimum,maximum,100)
+    # First Graph
+    kernel2 = stats.gaussian_kde(a1[Y], 'scott')
+    kernel3 = stats.gaussian_kde(a0[Y], 'scott')
+
+    pylab.plot(x,kernel2(x),"g", label = "Treatment") # distribution function
+    pylab.plot(x,kernel3(x),"m", label = 'No Treatment') # distribution function
+    pylab.hist(a1[Y],density=True,alpha=.3, color = "g") # histogram
+    pylab.hist(a0[Y],density=True,alpha=.3, color = "m") # histogram
+    pylab.legend(fontsize=15, title_fontsize=20)
+    pylab.ylabel('p(Y | A)', fontsize = 15)
+    pylab.xlabel('Outcome', fontsize = 15)
+    #pylab.title("Before")
+    pylab.show()
+
     kernel2 = stats.gaussian_kde(a1_resample, 'scott')
     kernel3 = stats.gaussian_kde(a0_resample, 'scott')
 
-    x = np.linspace(0,1,100)
-    pylab.plot(x,kernel1(x),"r", label = "Y(a')") # distribution function
-    pylab.plot(x,kernel0(x),"b", label = 'Y(a)') # distribution function
-    pylab.plot(x,kernel2(x),"g", label = "Y(a') resampled") # distribution function
-    pylab.plot(x,kernel3(x),"m", label = 'Y(a) resampled') # distribution function
-    pylab.hist(a1_resample,density=1,alpha=.3, color = "m", label = "Y(a') resampled histogram") # histogram
-    pylab.hist(a0_resample,density=1,alpha=.3, color = "g", label = "Y(a) resampled histogram") # histogram
-    pylab.legend(loc='upper right')
-    pylab.title("Counterfactual Densities")
+
+    #pylab.plot(x,kernel1(x),"r", label = "Y(a')") # distribution function
+    #pylab.plot(x,kernel0(x),"b", label = 'Y(a)') # distribution function
+    pylab.plot(x,kernel2(x),"g", label = "Treatment") # distribution function
+    pylab.plot(x,kernel3(x),"m", label = 'No Treatment') # distribution function
+    pylab.hist(a1_resample,density=1,alpha=.3, color = "g") # histogram
+    pylab.hist(a0_resample,density=1,alpha=.3, color = "m") # histogram
+    pylab.legend(fontsize=15, title_fontsize=20)
+    pylab.ylabel('p(Y | do(A))', fontsize = 15)
+    pylab.xlabel('Outcome', fontsize = 15)
+    #pylab.title("After IPW")
     pylab.show()
     
 
@@ -164,17 +183,21 @@ def check_no_change(data, nums):
 def test_generated():
     nums = 10000
     data = pd.DataFrame()
-    data['C'] = sf.generate_normal(0, 1, nums)
+    data['C'] =  sf.generate_uniform(0, 1, nums)
+    mi, ma = min(data['C']), max(data['C'])
+    ran = ma - mi
     arr = [0]*nums
     for i in range(nums):
-        p = random.random()
-        if data['C'][i] > 0:
-            arr[i] = 0 if p < 0.7 else 1
-        else:
-            arr[i] = 0 if p < 0.3 else 1
+        p = (data['C'][i] - mi)/ran
+        r = random.random()
+        arr[i] = 0 if r < p else 1
     data['A'] = arr
-    data['theor'] = np.where(data['A'] == 0, np.where(data['C'] > 0, 0.7, 0.3), np.where(data['C'] > 0, 0.3, 0.7))
-    data['Y'] = data['C'] + 2*data['A'] + sf.generate_uniform(-1, 1, nums)
+    #data['theor'] = np.where(data['A'] == 0, np.where(data['C'] > 0, 0.25, 0.75), np.where(data['C'] > 0, 0.75, 0.25))
+    data['Y'] = sf.generate_normal(0, 1, nums)
+    for i in range(nums):
+        data['Y'][i] += random.gauss(0, abs((data['C'][i]*5))) if data['A'][i] == 0 else random.gauss(0, abs((data['C'][i])*10))
+    #for i in range(len(data)):
+    #    data['Y'][i] = data['Y'][i] + (1 if data['A'][i] < data['C'][i] + 1 else 0)
 
     #check_distribution_change(data, nums)
     #check_y_change(data, nums)
@@ -186,10 +209,11 @@ def test_generated():
 # Testing of code and of conjecture
 #
 def main():
-    nsw_randomized = pd.read_csv("Data/nsw_randomized.txt")
-    nsw_observational = pd.read_csv("Data/nsw_observational.txt")
+    test_generated()
+    #nsw_randomized = pd.read_csv("Data/nsw_randomized.txt")
+    #nsw_observational = pd.read_csv("Data/nsw_observational.txt")
 
-    covariates = ["age","educ","black","hisp","marr","nodegree","re74","re75"]
+    #covariates = ["age","educ","black","hisp","marr","nodegree","re74","re75"]
     #interaction = ["age","educ","black","hisp","marr","nodegree","re74","re75","black*nodegree","black*treat","black*educ","hisp*nodegree","hisp*treat","hisp*educ","treat*nodegree","treat*educ"]
     #output = practical_counterfactual_distributions('treat', covariates, 're78', nsw_observational)
     #output2 = practical_counterfactual_distributions('treat', covariates, 're78', nsw_observational)
@@ -208,6 +232,7 @@ def main():
         output2 = (remove_outliers(output[0]), remove_outliers(output[1]))
         plot_distributions(output2, "Outliers Removed")
         print(f"No outliers: {mmd.ci_mmd(output2[0], output2[1])}")
+    '''
     '''
     minimum = nsw_randomized['re78'].min()
     maximum = nsw_randomized['re78'].max() - minimum
@@ -229,6 +254,7 @@ def main():
 
     #plot_distributions(output2, 'Observational')
     #print(mmd.ci_mmd(output2[0], output2[1]))
+    '''
 
 
 if __name__ == "__main__":

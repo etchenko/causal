@@ -1,7 +1,6 @@
 from typing import Callable
 import pandas as pd
 import numpy as np
-import random
 import sim_functions as sf
 from scipy.stats import wasserstein_distance
 
@@ -59,6 +58,8 @@ def main():
     # Test whether it differentiates gaussian and laplacian distributions
     gauss = sf.generate_gauss(0, 1, 1000)
     lap = sf.generate_laplace(0, 1/2, 1000)
+
+
     print(wass_conf(gauss, lap))
 
 
